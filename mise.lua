@@ -36,10 +36,10 @@ end
 
 --------------------------------------------------------------------------------
 -- updateEnv()
--- Executes "mise hook-env -s pwsh" and sets environment variables accordingly.
+-- Executes "mise env" and sets environment variables accordingly.
 --------------------------------------------------------------------------------
 local function updateEnv()
-    local hook_cmd = string.format('"%s" hook-env -s pwsh', mise_path)
+    local hook_cmd = string.format('"%s" env', mise_path)
     local fh = io.popen(hook_cmd)
     if not fh then return end
     local output = fh:read("*a")
@@ -56,7 +56,25 @@ local function updateEnv()
     end
 end
 
+--------------------------------------------------------------------------------
+-- Install if there is a mise config exists
+--------------------------------------------------------------------------------
+local function install()
+    local config_check = io.popen(string.format('"%s" config', mise_path))
+    if not config_check then return end
+    local config_output = config_check:read("*a")
+    config_check:close()
 
+    -- Trim und prüfen auf leeren Inhalt
+    config_output = config_output:match("^%s*(.-)%s*$")  -- trim
+
+    if config_output == "" then
+        return  -- keine Config → nichts tun
+    end
+
+    local hook_cmd = string.format('"%s" install', mise_path)
+    os.execute(hook_cmd)
+end
 
 --------------------------------------------------------------------------------
 -- Handle "mise" command directly in Clink (optional fallback)
@@ -104,12 +122,13 @@ end
 -- Hooks
 --------------------------------------------------------------------------------
 
--- Auto-update env when changing directory
+-- Auto install and auto update env when changing directory
 local last_dir = ""
 clink.onbeginedit(function()
     local current_dir = os.getcwd()
     if current_dir ~= last_dir then
         last_dir = current_dir
+        install()
         updateEnv()
     end
 end)
