@@ -65,11 +65,12 @@ local function install()
     local config_output = config_check:read("*a")
     config_check:close()
 
-    -- Trim und prüfen auf leeren Inhalt
-    config_output = config_output:match("^%s*(.-)%s*$")  -- trim
+    -- trim
+    config_output = config_output:match("^%s*(.-)%s*$")
 
     if config_output == "" then
-        return  -- keine Config → nichts tun
+        -- nothing found -> no action needed
+        return
     end
 
     local hook_cmd = string.format('"%s" install', mise_path)
