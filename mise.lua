@@ -632,7 +632,7 @@ if not standalone then
                 local last_deleted = tonumber(os.getenv(MISE_CMD_TEMP_DIRS_LAST_DELETED_KEY) or 0)
                 local threshold_hour = 1
                 local threshold_secs = threshold_hour * 60 * 60
-                if now - last_deleted < threshold_secs then
+                if now - last_deleted + threshold_secs > 0 then
                     local co = coroutine.create(function()
                         _delete_temps(threshold_hour)
                     end)
