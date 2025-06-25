@@ -31,6 +31,8 @@ local MISE_CLINK_AUTO_ACTIVATE_ARGS
 local MISE_CMD_ACTIVATED_KEY = "__MISE_CLINK_CMD_ACTIVATED"
 local MISE_ACTIVATED_KEY = "__MISE_CLINK_ACTIVATED"
 local MISE_HOOK_ENV_ARGS_KEY = "__MISE_CLINK_HOOK_ENV_ARGS"
+local MISE_CMD_TEMP_DIRS_SHOULD_DELETE_KEY = "__MISE_CLINK_CMD_TEMP_DIRS_SHOULD_DELETE"
+local MISE_CMD_TEMP_DIRS_LAST_DELETED_KEY = "__MISE_CLINK_CMD_TEMP_DIRS_LAST_DELETED"
 
 if not standalone then
     if not settings.add then
@@ -128,15 +130,47 @@ local function get_temp_file(prefix, ext, path)
     return fh, fname
 end
 
-local function delete_temp_dir(paths_t)
+local function delete_files_and_dirs_with(paths_t, threshold_hour, recursive, wait)
     local n = 0
     for _, _ in ipairs(paths_t) do
         n = 1
         break
     end
-    assert(n ~= 0, "[ERROR]: paths shouldn't be empty to delete")
-    local cmd = string.format('DEL /Q "%s"', table.concat(paths_t, '" "'))
-    os.execute(cmd)
+    if n == 0 then return end
+
+    local paths_arr      = '"' .. table.concat(paths_t, '", "') .. '"'
+    threshold_hour       = -24 --threshold_hour or 0
+    local recursive_flag = recursive and "$true" or "$false"
+    local param_vars     = string.format([[
+        <# Array of paths to clean #>
+        $paths = @(%s);
+        $thresholdHour = %d;
+        $recurse = @{ Recurse = %s };
+    ]], paths_arr, threshold_hour, recursive_flag)
+    local delete_ps1     = param_vars .. [[
+    <# Remove files older than threshold #>
+    Get-ChildItem -Path $paths -File @recurse
+    | Where-Object { $_.LastWriteTime.AddHours($thresholdHour) -lt (Get-Date) }
+    | Remove-Item -Force -ErrorAction SilentlyContinue;
+    <# Remove empty directories recursively #>
+    Get-ChildItem -Path $paths -Directory @recurse
+    | Where-Object { -Not (Get-ChildItem $_.FullName @recurse -Force | Where-Object { -not $_.PSIsContainer }) }
+    | Remove-Item -Force -ErrorAction SilentlyContinue;
+]]
+
+    local cmd_line       = [[powershell -NoLogo -NonInteractive -NoProfile -Command "]] ..
+        delete_ps1:gsub('"', '\\"'):gsub("\r?\n", " ") .. '"'
+    if wait then
+        local fh, err = io.popen(cmd_line)
+        assert(fh, "[ERROR]: failed to delete paths: " .. paths_arr .. (err and ("\n :" .. err) or ""))
+        local output = fh:read("*a")
+        local ok, _, code = fh:close()
+        return ok, code, output
+    else
+        cmd_line = [[start "mise_clink_delete_paths" /b ]] .. cmd_line .. " >nul 2>nul"
+        local ok, _, code = os.execute(cmd_line)
+        return ok, code, nil
+    end
 end
 
 --------------------------------------------------------------------------------
@@ -451,10 +485,6 @@ function mise(args)
         env_fh:write("@echo off\r\n")
         table.remove(args, #args)
         table.remove(args, #args)
-    else
-        local tenv_fh, tenv_fn = get_temp_file(nil, nil, get_script_dir() .. "\\mise-clink")
-        tenv_fh:close()
-        env_fn = tenv_fn
     end
 
 
@@ -563,6 +593,19 @@ if not standalone then
         return EVAL_ALIAS_NAME .. " " .. input
     end
 
+    -- Delete temp paths older than threshold_hour
+    local function _delete_temps(threshold_hour)
+        local tmps_t = {}
+        table.insert(tmps_t, mise_cmd_dir .. "\\temp")
+        table.insert(tmps_t, "$env:TEMP" .. "\\mise-clink")
+        local recurse = true
+        local wait = false
+        delete_files_and_dirs_with(tmps_t, threshold_hour, recurse, wait)
+        local now = os.time()
+        os.setenv(MISE_CMD_TEMP_DIRS_LAST_DELETED_KEY, tostring(now))
+        os.setenv(MISE_CMD_TEMP_DIRS_SHOULD_DELETE_KEY, nil)
+    end
+
 
     ------------------------------------------------------------------------------------
     -- Hooks
@@ -584,10 +627,18 @@ if not standalone then
                 return
             end
 
-            local tmps_t = {}
-            table.insert(tmps_t, mise_cmd_dir .. "\\mise-clink")
-            table.insert(tmps_t, "%TEMP%" .. "\\mise-clink")
-            delete_temp_dir(tmps_t)
+            if os.getenv(MISE_CMD_TEMP_DIRS_SHOULD_DELETE_KEY) then
+                local now = os.time()
+                local last_deleted = tonumber(os.getenv(MISE_CMD_TEMP_DIRS_LAST_DELETED_KEY) or 0)
+                local threshold_hour = 1
+                local threshold_secs = threshold_hour * 60 * 60
+                if now - last_deleted < threshold_secs then
+                    local co = coroutine.create(function()
+                        _delete_temps(threshold_hour)
+                    end)
+                    clink.runcoroutineuntilcomplete(co)
+                end
+            end
 
             _mise_hook()
         end)
