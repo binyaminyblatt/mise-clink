@@ -1,7 +1,7 @@
 @echo off
 setlocal
 
-@REM To use the original mise, you can run this script with the following command:
+@REM To use the original mise, you can run the following command:
 @REM mise.exe <args>
 @REM i.e. appending '.exe' to the command.
 
