@@ -189,7 +189,9 @@ function set_env(key, val)
     if key then
         -- Ensuring val isn't something like "C:\path\to\dir1;C:\path\to\dir2;%PATH%"
         -- Because it needs to be expanded before using os.setenv
-        val = os.expandenv(val)
+        if val then
+            val = os.expandenv(val)
+        end
         os.setenv(key, val)
     end
 end
