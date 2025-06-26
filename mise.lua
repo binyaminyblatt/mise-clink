@@ -452,7 +452,7 @@ function parse_command_and_run_mise(args)
         end
     end
 
-    args[1] = replaceShimMiseExe(args[1])
+    args[1] = mise_path
     local arg = args[2] -- This is the arg that points to subcommand
     if subcmds[arg] ~= nil then
         subcommand = arg
