@@ -23,7 +23,8 @@ package.path = debug.getinfo(1, "S").source:match [[^@?(.*[\/])[^\/]-$]] .. "mod
 -- local inspect = require("inspect")
 local standalone = not clink.argmatcher
 local BASE_SHELL = "pwsh"
-local CLINK_ID = os.getenv("=clink.id")
+local CLINK_PID_KEY = "CLINK_PID"
+local CLINK_PID = os.getenv(CLINK_PID_KEY) or os.getpid()
 local EVAL_ALIAS_NAME = "eval.cmd"
 local MISE_CLINK_AUTO_ACTIVATE
 local MISE_CLINK_AUTO_ACTIVATE_ARGS
@@ -114,9 +115,9 @@ local mise_exe_dir = path.getdirectory(mise_path)
 
 local function get_temp_file(prefix, ext, path)
     if not prefix then
-        prefix = CLINK_ID
+        prefix = CLINK_PID
     else
-        prefix = CLINK_ID .. prefix
+        prefix = CLINK_PID .. prefix
     end
 
     if not ext then
@@ -547,6 +548,7 @@ if not standalone then
         path = path:gsub(string.format("%s;", mise_cmd_dir:escape()), "")
         os.setenv("PATH", mise_cmd_dir .. ";" .. path)
         os.setenv(MISE_CMD_ACTIVATED_KEY, 1)
+        os.setenv(CLINK_PID_KEY, os.getpid())
     end
 
     -- Check for automatic activation of mise
