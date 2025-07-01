@@ -1,141 +1,659 @@
---[[
-    Clink init.lua for integrating mise with PowerShell dynamically.
+---@diagnostic disable: undefined-field, undefined-global
+-------------------------------------------------------------------------------------
+-- mise.lua
+-- This script is a Clink extension for managing the mise environment.
+-- Requires to be used in conjunction with scripts:
+--   - mise.cmd
+--   - eval.cmd
+-------------------------------------------------------------------------------------
 
-    Features:
-    • Dynamically finds mise.exe using "where"
-    • Sets MISE_SHELL and __MISE_ORIG_PATH
-    • Defines updateEnv() using "mise hook-env -s pwsh"
-    • Handles directory changes
-    • Hooks after relevant mise commands (e.g., install/use/activate/shell/sh)
---]]
+local MISE_CLINK_ENABLED_DEFAULT = true
+local MISE_CLINK_ENABLED
+if settings then
+    settings.add("mise.enabled", MISE_CLINK_ENABLED_DEFAULT, "Enable mise.lua script to run on Clink startup",
+        "Although, the standalone script is run by clink if mise.cmd is in the PATH. " ..
+        "Also, after enabling this setting, re-run the info command to see the all the settings.")
+    MISE_CLINK_ENABLED = settings.get("mise.enabled")
+    if not MISE_CLINK_ENABLED then
+        return
+    end
+end
+
+package.path = debug.getinfo(1, "S").source:match [[^@?(.*[\/])[^\/]-$]] .. "modules/?.lua;" .. package.path
+-- local inspect = require("inspect")
+local standalone = not clink.argmatcher
+local BASE_SHELL = "pwsh"
+local CLINK_PID_KEY = "CLINK_PID"
+local CLINK_PID = os.getenv(CLINK_PID_KEY) or os.getpid()
+local EVAL_ALIAS_NAME = "eval.cmd"
+local MISE_CLINK_AUTO_ACTIVATE
+local MISE_CLINK_AUTO_ACTIVATE_ARGS
+
+local MISE_CMD_ACTIVATED_KEY = "__MISE_CLINK_CMD_ACTIVATED"
+local MISE_ACTIVATED_KEY = "__MISE_CLINK_ACTIVATED"
+local MISE_HOOK_ENV_ARGS_KEY = "__MISE_CLINK_HOOK_ENV_ARGS"
+local MISE_CMD_TEMP_DIRS_SHOULD_DELETE_KEY = "__MISE_CLINK_CMD_TEMP_DIRS_SHOULD_DELETE"
+local MISE_CMD_TEMP_DIRS_LAST_DELETED_KEY = "__MISE_CLINK_CMD_TEMP_DIRS_LAST_DELETED"
+
+if not standalone then
+    if not settings.add then
+        print("mise.lua requires a newer version of Clink; please upgrade.")
+    else
+        settings.add("mise.auto_activate", true, "Auto activate mise on clink startup",
+            "Otherwise, you'd need to run 'eval mise activate pwsh' manually.")
+        settings.add("mise.auto_activate_args", "", "Line of args: mise activate " .. BASE_SHELL .. " <ARGS_LINE>")
+        MISE_CLINK_AUTO_ACTIVATE = settings.get("mise.auto_activate")
+        MISE_CLINK_AUTO_ACTIVATE_ARGS = settings.get("mise.auto_activate_args")
+    end
+end
+
 
 --------------------------------------------------------------------------------
--- Dynamic Environment Initialization
+-- Utils: Utility functions for general operations
 --------------------------------------------------------------------------------
-local current_path = os.getenv("PATH") or ""
-os.setenv("PATH", current_path)
-os.setenv("MISE_SHELL", "pwsh")
-os.setenv("__MISE_ORIG_PATH", current_path)
+function table.extend(t1, t2)
+    for _, v in ipairs(t2) do
+        table.insert(t1, v)
+    end
+end
+
+function string.escape(s)
+    return s:gsub("([%%%^%$%(%)%[%]%.*%+%-%?])", "%%%1")
+end
+
+function string.split(str, delimiter)
+    local res, i = {}, 1
+    while true do
+        local a, b = str:find(delimiter, i, true)
+        if not a then break end
+        table.insert(res, str:sub(i, a - 1))
+        i = b + 1
+    end
+    table.insert(res, str:sub(i))
+    return res
+end
+
+function eprint(...)
+    local args = { ... }
+    io.stderr:write(table.concat(args, " ") .. "\r\n")
+end
+
+function get_script_dir()
+    local dir
+    local info = debug.getinfo(1, "S")
+    if info and info.source then
+        dir = path.getdirectory(info.source:sub(2))
+    end
+    return dir or ""
+end
 
 --------------------------------------------------------------------------------
--- Find the path to mise.exe dynamically using the "where" command.
+-- Replace the path to mise.exe if its a shim
+--------------------------------------------------------------------------------
+local function replaceShimMiseExe(shim_mise_exe)
+    return shim_mise_exe:gsub("scoop\\shims\\", "scoop\\apps\\mise\\current\\bin\\")
+end
+
+--------------------------------------------------------------------------------
+-- Find the path to mise.exe using the "where" command.
 --------------------------------------------------------------------------------
 local function findMiseExe()
-    local fh = io.popen("where mise.exe 2>nul")
-    if not fh then return nil end
+    local fh, err = io.popen("where mise.exe 2>nul")
+    assert(fh, "[ERROR]: 'where' command failed to execute: " .. (err or ""))
     local path = fh:read("*l")
     fh:close()
-    return path or "mise.exe"
+    return path and replaceShimMiseExe(path) or "mise.exe"
 end
 
 local mise_path = findMiseExe()
 if not mise_path or mise_path == "" then
-    print("Error: mise.exe not found in PATH.")
+    eprint("Error: mise.exe not found in PATH.")
     mise_path = "mise.exe"
 end
+local mise_cmd_dir = get_script_dir()
+local mise_exe_dir = path.getdirectory(mise_path)
+
+local function get_temp_file(prefix, ext, path)
+    if not prefix then
+        prefix = CLINK_PID
+    else
+        prefix = CLINK_PID .. prefix
+    end
+
+    if not ext then
+        ext = ".cmd"
+    end
+    if not path then
+        path = os.getenv("TEMP") .. "\\mise-clink"
+    end
+    os.mkdir(path)
+    local fh, fname = os.createtmpfile(prefix, ext, path)
+    return fh, fname
+end
+
+local function delete_files_and_dirs_with(paths_t, threshold_hour, recursive, wait)
+    local n = 0
+    for _, _ in ipairs(paths_t) do
+        n = 1
+        break
+    end
+    if n == 0 then return end
+
+    local paths_arr      = '"' .. table.concat(paths_t, '", "') .. '"'
+    threshold_hour       = -24 --threshold_hour or 0
+    local recursive_flag = recursive and "$true" or "$false"
+    local param_vars     = string.format([[
+        <# Array of paths to clean #>
+        $paths = @(%s);
+        $thresholdHour = %d;
+        $recurse = @{ Recurse = %s };
+    ]], paths_arr, threshold_hour, recursive_flag)
+    local delete_ps1     = param_vars .. [[
+    <# Remove files older than threshold #>
+    Get-ChildItem -Path $paths -File @recurse
+    | Where-Object { $_.LastWriteTime.AddHours($thresholdHour) -lt (Get-Date) }
+    | Remove-Item -Force -ErrorAction SilentlyContinue;
+    <# Remove empty directories recursively #>
+    Get-ChildItem -Path $paths -Directory @recurse
+    | Where-Object { -Not (Get-ChildItem $_.FullName @recurse -Force | Where-Object { -not $_.PSIsContainer }) }
+    | Remove-Item -Force -ErrorAction SilentlyContinue;
+]]
+
+    local cmd_line       = [[powershell -NoLogo -NonInteractive -NoProfile -Command "]] ..
+        delete_ps1:gsub('"', '\\"'):gsub("\r?\n", " ") .. '"'
+    if wait then
+        local fh, err = io.popen(cmd_line)
+        assert(fh, "[ERROR]: failed to delete paths: " .. paths_arr .. (err and ("\n :" .. err) or ""))
+        local output = fh:read("*a")
+        local ok, _, code = fh:close()
+        return ok, code, output
+    else
+        cmd_line = [[start "mise_clink_delete_paths" /b ]] .. cmd_line .. " >nul 2>nul"
+        local ok, _, code = os.execute(cmd_line)
+        return ok, code, nil
+    end
+end
 
 --------------------------------------------------------------------------------
--- updateEnv()
--- Executes "mise hook-env -s pwsh" and sets environment variables accordingly.
+-- Prepend the mise command directory before the mise executable
+-- directory in PATH.
 --------------------------------------------------------------------------------
-local function updateEnv()
-    local hook_cmd = string.format('"%s" hook-env -s pwsh', mise_path)
-    local fh = io.popen(hook_cmd)
-    if not fh then return end
-    local output = fh:read("*a")
-    fh:close()
+local function prepend_mise_cmd_before_mise_exe(path_env)
+    local path = path_env or os.getenv("PATH")
+    assert(path, "[ERROR]: %PATH% shouldn't be nil!")
+    if path:match(string.format("%s;", mise_exe_dir:escape())) then
+        path = path:gsub(string.format("%s;", mise_cmd_dir:escape()), "")
+    end
+    path = path:gsub(string.format("%s;", mise_exe_dir:escape()), string.format("%s;%s;", mise_cmd_dir, mise_exe_dir))
+    if not path_env then os.setenv("PATH", path) end
+    return path
+end
 
-    -- Parse lines like: $Env:KEY='value'
-    for line in output:gmatch("[^\r\n]+") do
-        local key, val = line:match("^%$Env:([^=]+)='(.*)'$")
+--------------------------------------------------------------------------------
+-- Parse environment variables from the line of PowerShell scripting language.
+-- Extracts key-value pairs from line that start with "$env" or "Remove-Item".
+--------------------------------------------------------------------------------
+local function parse_env(line)
+    if line:match("^%$[eE][nN][vV]") then
+        local key, val = line:match("^%$[eE][nN][vV]:([%w_]+)%s*=%s*(.*)$")
         if key and val then
+            -- Remove outer single quotes
+            val = val:gsub("^\'", ""):gsub("\'$", "")
+            val = val:gsub("\'?%+%[IO%.Path%]::PathSeparator%+", ";")
+            val = val:gsub("%$[eE][nN][vV]:([%w_]+)", "%%%1%%")
             -- Handle escaped quotes or trailing backslashes
             val = val:gsub("\\'", "'"):gsub("\\\\", "\\")
-            os.setenv(key, val)
+            if key:upper() == "PATH" then
+                val = prepend_mise_cmd_before_mise_exe(val)
+            end
+            return key, val
+        end
+    elseif line:match("^Remove%-Item") then
+        local key = line:match("^Remove%-Item .- %-Path [eE][nN][vV]:[/\\](%S+)")
+        if key then
+            if key == "__MISE_WATCH" then key = "__MISE_SESSION" end
+            return key, nil
         end
     end
 end
 
-
+--------------------------------------------------------------------------------
+-- Set environment variable for the current process
+--------------------------------------------------------------------------------
+function set_env(key, val)
+    if key then
+        -- Ensuring val isn't something like "C:\path\to\dir1;C:\path\to\dir2;%PATH%"
+        -- Because it needs to be expanded before using os.setenv
+        if val then
+            val = os.expandenv(val)
+        end
+        os.setenv(key, val)
+    end
+end
 
 --------------------------------------------------------------------------------
--- Handle "mise" command directly in Clink (optional fallback)
+-- Write environment variables to a file or stdout
 --------------------------------------------------------------------------------
-function clink_command_mise(args)
-    if #args == 0 then
-        os.execute(string.format('"%s"', mise_path))
-        return
+function write_env(key, val, env_fh)
+    local fh = env_fh or io.stdout
+    if key then
+        local cmd = string.format('set "%s=%s"\r\n', key, val or "")
+        fh:write(cmd)
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Write line to a file or stdout
+--------------------------------------------------------------------------------
+function write_line(line, env_fh)
+    local fh = env_fh or io.stdout
+    if line then
+        fh:write(line .. "\r\n")
+    end
+end
+
+--------------------------------------------------------------------------------
+-- Executes "mise hook-env <args>"
+-- then set or write environment variables accordingly.
+--------------------------------------------------------------------------------
+local _hook_env_flags = {}
+local function hook_env(args, env_fh, invoked_from_hook)
+    local hook_args_line
+    if type(args) == "table" then
+        if not args then
+            args = {}
+            table.extend(args, _hook_env_flags)
+            table.extend(args, { "-s", BASE_SHELL })
+        end
+        hook_args_line = table.concat(args, " ")
+    elseif type(args) == "string" then
+        hook_args_line = args
     end
 
-    local command = args[1]
-    local help_requested = false
-    for _, a in ipairs(args) do
-        if a == "--help" or a == "-h" then
-            help_requested = true
+    if invoked_from_hook and not os.getenv(MISE_ACTIVATED_KEY) then return end
+    assert(hook_args_line, "[ERROR]: hook_args_line shouldn't be nil! type(hook_args): " .. type(args))
+    local hook_cmd = string.format('"%s" hook-env %s', mise_path, hook_args_line)
+    local fh, err = io.popen(hook_cmd)
+    assert(fh, "[ERROR]: failed to run: " .. hook_cmd .. (err and " :" .. err or ""))
+    local output = fh:read("*a")
+    local success, _, code = fh:close()
+    if success then
+        for line in output:gmatch("[^\r\n]+") do
+            local key, val = parse_env(line)
+            if invoked_from_hook then
+                set_env(key, val)
+            else
+                write_env(key, val, env_fh)
+            end
+        end
+    elseif not invoked_from_hook then
+        eprint(output)
+    end
+    return code
+end
+
+--------------------------------------------------------------------------------
+-- Activate mise environment
+-- This function is called when the user runs "mise activate <args>"
+--------------------------------------------------------------------------------
+local function activate(args, env_fh, invoked_from_hook)
+    -- eprint(inspect(args))
+    local shims_only = false
+    for _, arg in ipairs(args) do
+        if arg == "--shims" then
+            shims_only = true
             break
+        end
+        if arg == "--status" or arg == "--quiet" or arg == "-q" then
+            table.insert(_hook_env_flags, arg)
         end
     end
 
-    local cmd_line = string.format('"%s"', mise_path)
-    for _, arg in ipairs(args) do
-        cmd_line = cmd_line .. " " .. arg
-    end
-
-    if command == "deactivate" or command == "shell" or command == "sh" then
-        if help_requested then
-            os.execute(cmd_line)
-        else
-            local fh = io.popen(cmd_line)
-            if fh then
-                local output = fh:read("*a")
-                fh:close()
-                if output and output:match("%S") then
-                    os.execute(output)
+    if shims_only then
+        local cmd_line = '""' .. table.concat(args, '" "') .. '""'
+        local fh, err = io.popen(cmd_line)
+        assert(fh, "[ERROR]: failed to run: " .. cmd_line .. (err and " :" .. err or ""))
+        local output = fh:read("*a")
+        local success, _, code = fh:close()
+        if success then
+            for line in output:gmatch("[^\r\n]+") do
+                local key, val = parse_env(line)
+                if invoked_from_hook then
+                    set_env(key, val)
+                else
+                    write_env(key, val, env_fh)
                 end
             end
+        else
+            if output and output ~= "" then eprint(output) end
         end
+        return code
+    end
+
+    local cmd_line = '""' .. table.concat(args, '" "') .. '""'
+    local fh = io.popen(cmd_line)
+    assert(fh, "[ERROR]: failed to run: " .. cmd_line .. (err and " :" .. err or ""))
+    local output = fh:read("*a")
+    local success, _, code = fh:close()
+    if success then
+        for line in output:gmatch("[^\r\n]+") do
+            local key, val = parse_env(line)
+            if invoked_from_hook then
+                set_env(key, val)
+            else
+                write_env(key, val, env_fh)
+            end
+        end
+        local h_args = {}
+        table.extend(h_args, _hook_env_flags)
+        table.extend(h_args, { "-s", BASE_SHELL })
+        local h_args_line = table.concat(h_args, " ")
+        if invoked_from_hook then
+            -- hook-env will be automatically called from the hook
+            set_env(MISE_ACTIVATED_KEY, 1)
+            set_env(MISE_HOOK_ENV_ARGS_KEY, h_args_line)
+        else
+            local hook_cmd = string.format('call "%s\\%s" "%s\\mise.cmd" hook-env %s', mise_cmd_dir, EVAL_ALIAS_NAME,
+                mise_cmd_dir,
+                h_args_line)
+            write_line(hook_cmd)
+            write_env(MISE_ACTIVATED_KEY, 1, env_fh)
+            write_env(MISE_HOOK_ENV_ARGS_KEY, h_args_line, env_fh)
+        end
+    elseif not invoked_from_hook then
+        if output and output ~= "" then eprint(output) end
+    end
+    return code
+end
+
+--------------------------------------------------------------------------------
+-- Common subcommand handler for various subcommands
+--------------------------------------------------------------------------------
+local function common_subcommand(command, args, env_fh, invoked_from_hook)
+    local cmd_line = '""' .. table.concat(args, '" "') .. '""'
+    local fh, err = io.popen(cmd_line)
+    assert(fh, "[ERROR]: failed to run: " .. cmd_line .. (err and " :" .. err or ""))
+    local output = fh:read("*a")
+    local success, _, code = fh:close()
+    if success then
+        for line in output:gmatch("[^\r\n]+") do
+            local key, val = parse_env(line)
+            if invoked_from_hook then
+                set_env(key, val)
+            else
+                write_env(key, val, env_fh)
+            end
+        end
+        if command == "deactivate" then
+            if invoked_from_hook then
+                set_env(MISE_ACTIVATED_KEY, nil)
+                set_env(MISE_HOOK_ENV_ARGS_KEY, nil)
+            else
+                write_env(MISE_ACTIVATED_KEY, nil, env_fh)
+                write_env(MISE_HOOK_ENV_ARGS_KEY, nil, env_fh)
+            end
+        end
+    elseif not invoked_from_hook then
+        if output and output ~= "" then eprint(output) end
+    end
+    return code
+end
+
+--------------------------------------------------------------------------------
+-- Check if the command is a common subcommand that should be handled as a
+-- common_subcommand.
+--------------------------------------------------------------------------------
+local function is_common_subcommand(command)
+    if not command or command == "" then return false end
+    local common_cmds = { "deactivate", "e", "env", "sh", "shell" }
+    for _, cmd in ipairs(common_cmds) do
+        if command == cmd then
+            return true
+        end
+    end
+    return false
+end
+
+--------------------------------------------------------------------------------
+-- Run the command as it is, without any modifications.
+-- This is used for commands that doesn't needs to be processed.
+--------------------------------------------------------------------------------
+local function run_as_it_is(args)
+    local cmd_line = '""' .. table.concat(args, '" "') .. '""'
+    local fh, err = io.popen(cmd_line)
+    assert(fh, "[ERROR]: failed to run: " .. cmd_line .. (err and " :" .. err or ""))
+    for line in fh:lines() do
+        print(line)
+    end
+    local _, _, code = fh:close()
+    return code
+end
+
+--------------------------------------------------------------------------------
+-- Parse and run the appropriate mise command.
+-- This function is the entry point for the mise command.
+-- It checks for subcommands and handles them accordingly.
+--------------------------------------------------------------------------------
+function parse_command_and_run_mise(args)
+    local subcmds = {}
+    local process_cmds = { "activate", "deactivate", "e", "env", "hook-env", "sh", "shell" }
+
+    -- Set process commands
+    for _, cmd in ipairs(process_cmds) do
+        subcmds[cmd] = 1
+    end
+
+    local subcommand
+    local help_requested
+    for _, arg in ipairs(args) do
+        if string.match(arg, "^[-]*h[elp]*$") then
+            help_requested = 1
+            break
+        end
+    end
+
+    args[1] = mise_path
+    local arg = args[2] -- This is the arg that points to subcommand
+    if subcmds[arg] ~= nil then
+        subcommand = arg
+    end
+
+    if help_requested or not subcommand then
+        local code = run_as_it_is(args)
+        os.exit(code)
     else
-        os.execute(cmd_line)
-        updateEnv()
+        local nargs = {}
+        table.extend(nargs, { subcommand })
+        table.extend(nargs, args)
+        mise(nargs)
     end
 end
 
 --------------------------------------------------------------------------------
--- Hooks
+-- Mise command handler run by the parser if the subcommand
+-- requires processing by mise.lua.
 --------------------------------------------------------------------------------
+function mise(args)
+    assert(#args > 0, "[ERROR]: this shouldn't happen, args are always provided")
 
--- Auto-update env when changing directory
-local last_dir = ""
-clink.onbeginedit(function()
-    local current_dir = os.getcwd()
-    if current_dir ~= last_dir then
-        last_dir = current_dir
-        updateEnv()
+    local command = args[1]
+
+    local env_fn, env_fh
+    if args[#args - 1] == "--redirect" then
+        env_fn = args[#args]
+        env_fh, err = io.open(env_fn, "w")
+        assert(env_fh, "[ERROR]: failed to open: " .. env_fn .. (err and " :" .. err or ""))
+        env_fh:write("@echo off\r\n")
+        table.remove(args, #args)
+        table.remove(args, #args)
     end
-end)
 
--- Auto-update env after specific mise commands (install/use/activate/etc)
-clink.onfilterinput(function(input)
-    if not input then return end
 
-    local cmd = input:match("^%s*([%w-_]+)")
-    if not cmd then return end
+    if command == "activate" then
+        local code = activate({ table.unpack(args, 2) }, env_fh)
+        os.exit(code)
+    end
 
-    local allowed_cmds = {
-        mise = true,
-        ms = true,
-        mi = true,
-    }
-
-    if not allowed_cmds[cmd] then return end
-
-    local triggers = { "use", "activate", "shell", "sh", "install", "deactivate" }
-    for _, sub in ipairs(triggers) do
-        if input:find("%f[%w]" .. sub .. "%f[%W]") then
-            clink.promptfilter(100).filter = function()
-                updateEnv()
+    if command == "hook-env" then
+        local should_run_as_it_is = false
+        local nargs = { table.unpack(args, 2) }
+        local shell
+        for i, arg in ipairs(nargs) do
+            local shell_arg = string.match(arg, "^-s") or string.match(arg, "^--shell")
+            if shell_arg and string.match(arg, "=") then
+                shell = string.gsub(arg, "^[^=]+", "")
+            elseif shell_arg then
+                shell = nargs[i + 1]
             end
-            break
+            if shell and shell ~= BASE_SHELL then
+                should_run_as_it_is = true
+                break
+            end
+        end
+
+        if should_run_as_it_is then
+            local code = run_as_it_is(nargs)
+            os.exit(code)
+        end
+
+        local code = hook_env({ table.unpack(nargs, 3) }, env_fh)
+        os.exit(code)
+    end
+
+    if is_common_subcommand(command) then
+        local code = common_subcommand(command, { table.unpack(args, 2) }, env_fh)
+        os.exit(code)
+    end
+
+    local nargs = { table.unpack(args, 2) }
+    local code = run_as_it_is(nargs)
+    os.exit(code)
+end
+
+if standalone then
+    local args = { ... }
+    -- eprint(inspect(args))
+    parse_command_and_run_mise(args)
+end
+
+--------------------------------------------------------------------------------
+-- Setup for mise-clink
+-- This section is executed when mise.lua is loaded as a Clink script.
+--------------------------------------------------------------------------------
+if not standalone then
+    -- Ensure required scripts are in the PATH
+    if not os.getenv(MISE_CMD_ACTIVATED_KEY) then
+        local path = os.getenv("PATH")
+        assert(path, "[ERROR]: %PATH% shouldn't be nil!")
+        path = path:gsub(string.format("%s;", mise_cmd_dir:escape()), "")
+        os.setenv("PATH", mise_cmd_dir .. ";" .. path)
+        os.setenv(MISE_CMD_ACTIVATED_KEY, 1)
+        os.setenv(CLINK_PID_KEY, os.getpid())
+    end
+
+    -- Check for automatic activation of mise
+    if not os.getenv(MISE_ACTIVATED_KEY) then
+        if MISE_CLINK_AUTO_ACTIVATE then
+            local args = { mise_path, "activate", BASE_SHELL }
+            if MISE_CLINK_AUTO_ACTIVATE_ARGS and MISE_CLINK_AUTO_ACTIVATE_ARGS ~= "" then
+                local line_args = string.split(MISE_CLINK_AUTO_ACTIVATE_ARGS, "%s")
+                table.extend(args, line_args)
+            end
+            activate(args, nil, true)
         end
     end
-end)
+
+    -- Hook environment variables if mise is activated
+    local function _mise_hook()
+        if not os.getenv(MISE_ACTIVATED_KEY) then return end
+        hook_env(os.getenv(MISE_HOOK_ENV_ARGS_KEY), nil, true)
+    end
+
+    -- Auto-evaluate commands for mise
+    -- For example: "mise deactivate" or "mise shell" doesn't need to be passed to 'eval'
+    local function _mise_auto_eval_cmds(input)
+        local cmd, subcmd = input:match("^%s-([%w-_]+)%s-([%w-_]+)")
+        if not cmd or not subcmd then return end
+
+        local allowed_cmds = {
+            mise = true,
+        }
+
+        local allowed_subcmds = {
+            deactivate = true,
+            shell = true,
+            sh = true,
+        }
+
+        if not allowed_cmds[cmd] or not allowed_subcmds[subcmd] then return end
+
+        local help_args = { "-h", "--help", "/h", "/help" }
+        for _, help_arg in ipairs(help_args) do
+            if input:find("%f[%w_%-]" .. help_arg:escape() .. "%f[^%w_%-]") then return end
+        end
+
+        return EVAL_ALIAS_NAME .. " " .. input
+    end
+
+    -- Delete temp paths older than threshold_hour
+    local function _delete_temps(threshold_hour)
+        local tmps_t = {}
+        table.insert(tmps_t, mise_cmd_dir .. "\\temp")
+        table.insert(tmps_t, "$env:TEMP" .. "\\mise-clink")
+        local recurse = true
+        local wait = false
+        delete_files_and_dirs_with(tmps_t, threshold_hour, recurse, wait)
+        local now = os.time()
+        os.setenv(MISE_CMD_TEMP_DIRS_LAST_DELETED_KEY, tostring(now))
+        os.setenv(MISE_CMD_TEMP_DIRS_SHOULD_DELETE_KEY, nil)
+    end
+
+
+    ------------------------------------------------------------------------------------
+    -- Hooks
+    ------------------------------------------------------------------------------------
+    if not clink.onbeginedit then
+        print("mise.lua requires a newer version of Clink; please upgrade.")
+    else
+        clink.onbeginedit(function()
+            if not os.getenv(MISE_ACTIVATED_KEY) then return end
+            local auto_activate = settings.get("mise.auto_activate")
+            local auto_activate_args = settings.get("mise.auto_activate_args")
+
+            if auto_activate ~= MISE_CLINK_AUTO_ACTIVATE or auto_activate_args ~= MISE_CLINK_AUTO_ACTIVATE_ARGS then
+                local command = "deactivate"
+                common_subcommand(command, { mise_path, command }, nil, true)
+                MISE_CLINK_AUTO_ACTIVATE = auto_activate
+                MISE_CLINK_AUTO_ACTIVATE_ARGS = auto_activate_args
+                clink.reload()
+                return
+            end
+
+            if os.getenv(MISE_CMD_TEMP_DIRS_SHOULD_DELETE_KEY) then
+                local now = os.time()
+                local last_deleted = tonumber(os.getenv(MISE_CMD_TEMP_DIRS_LAST_DELETED_KEY) or 0)
+                local threshold_hour = 1
+                local threshold_secs = threshold_hour * 60 * 60
+                if now - last_deleted + threshold_secs > 0 then
+                    local co = coroutine.create(function()
+                        _delete_temps(threshold_hour)
+                    end)
+                    clink.runcoroutineuntilcomplete(co)
+                end
+            end
+
+            _mise_hook()
+        end)
+    end
+
+    if not clink.onfilterinput then
+        print("mise.lua requires a newer version of Clink; please upgrade.")
+    else
+        clink.onfilterinput(function(input)
+            if not os.getenv(MISE_ACTIVATED_KEY) then return end
+            if not input or input:gsub("%s", "") == "" then return end
+            local mod_cmd = _mise_auto_eval_cmds(input)
+            return mod_cmd
+        end)
+    end
+end
