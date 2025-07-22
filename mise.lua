@@ -462,14 +462,17 @@ end
 -- Run the command as it is, without any modifications.
 -- This is used for commands that doesn't needs to be processed.
 --------------------------------------------------------------------------------
-local function run_as_it_is(args)
-    local cmd_line = '""' .. table.concat(args, '" "') .. '""'
-    local fh, err = io.popen(cmd_line)
-    assert(fh, "[ERROR]: failed to run: " .. cmd_line .. (err and " :" .. err or ""))
-    for line in fh:lines() do
-        print(line)
+function run_as_it_is(args)
+    local cmd_line
+    if type(args) == "table" then
+        cmd_line = '""' .. table.concat(args, '" "') .. '""'
+    elseif type(args) == "string" then
+        cmd_line = args
+    else
+        eprint("[function run_as_it_is]: Unknown param type of args")
+        os.exit(1)
     end
-    local _, _, code = fh:close()
+    local _, _, code = os.execute(cmd_line)
     return code
 end
 
