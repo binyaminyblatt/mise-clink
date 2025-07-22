@@ -113,6 +113,7 @@ if not mise_path or mise_path == "" then
 end
 local mise_cmd_dir = get_script_dir()
 local mise_exe_dir = path.getdirectory(mise_path)
+local mise_shells = { bash = 1, elvish = 1, fish = 1, nu = 1, xonsh = 1, zsh = 1, pwsh = 1 }
 
 local function mise_settings_get(setting)
     local cmd_line = mise_path .. " settings get " .. setting
@@ -257,6 +258,32 @@ function write_line(line, env_fh)
 end
 
 --------------------------------------------------------------------------------
+-- Get the specified shell from the table of args
+-- @param from_shell_flag: bool refers to whether the shell is a flag arg like
+-- `--shell[=]pwsh`
+-- @return shell can be nil
+--------------------------------------------------------------------------------
+local function get_shell_from_args(args, from_shell_flag)
+    local shell
+    for i, arg in ipairs(args) do
+        if from_shell_flag then
+            local shell_arg = string.match(arg, "^-s") or string.match(arg, "^--shell")
+            if shell_arg and string.match(arg, "=") then
+                shell = string.gsub(arg, "^[^=]+=", "")
+                break
+            elseif shell_arg then
+                shell = args[i + 1]
+                break
+            end
+        elseif mise_shells[arg] then
+            shell = arg
+            break
+        end
+    end
+    return shell
+end
+
+--------------------------------------------------------------------------------
 -- Executes "mise hook-env <args>"
 -- then set or write environment variables accordingly.
 --------------------------------------------------------------------------------
@@ -302,15 +329,22 @@ end
 --------------------------------------------------------------------------------
 local function activate(args, env_fh, invoked_from_hook)
     -- eprint(inspect(args))
+    local shell
     local shims_only = false
     for _, arg in ipairs(args) do
         if arg == "--shims" then
             shims_only = true
             break
-        end
-        if arg == "--status" or arg == "--quiet" or arg == "-q" then
+        elseif arg == "--status" or arg == "--quiet" or arg == "-q" then
             table.insert(_hook_env_flags, arg)
+        elseif mise_shells[arg] then
+            shell = arg
         end
+    end
+
+    if shell ~= BASE_SHELL then
+        local code = run_as_it_is(args)
+        return code
     end
 
     if shims_only then
@@ -374,6 +408,12 @@ end
 -- Common subcommand handler for various subcommands
 --------------------------------------------------------------------------------
 local function common_subcommand(command, args, env_fh, invoked_from_hook)
+    local shell = get_shell_from_args(args, true)
+    if shell ~= BASE_SHELL then
+        local code = run_as_it_is(args)
+        os.exit(code)
+    end
+
     local cmd_line = '""' .. table.concat(args, '" "') .. '""'
     local fh, err = io.popen(cmd_line)
     assert(fh, "[ERROR]: failed to run: " .. cmd_line .. (err and " :" .. err or ""))
@@ -499,23 +539,9 @@ function mise(args)
     end
 
     if command == "hook-env" then
-        local should_run_as_it_is = false
         local nargs = { table.unpack(args, 2) }
-        local shell
-        for i, arg in ipairs(nargs) do
-            local shell_arg = string.match(arg, "^-s") or string.match(arg, "^--shell")
-            if shell_arg and string.match(arg, "=") then
-                shell = string.gsub(arg, "^[^=]+", "")
-            elseif shell_arg then
-                shell = nargs[i + 1]
-            end
-            if shell and shell ~= BASE_SHELL then
-                should_run_as_it_is = true
-                break
-            end
-        end
-
-        if should_run_as_it_is then
+        local shell = get_shell_from_args(nargs, true)
+        if shell and shell ~= BASE_SHELL then
             local code = run_as_it_is(nargs)
             os.exit(code)
         end
