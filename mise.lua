@@ -75,7 +75,8 @@ end
 
 function eprint(...)
     local args = { ... }
-    io.stderr:write(table.concat(args, " ") .. "\r\n")
+    io.stderr:write(table.concat(args, " "))
+    io.stderr:write("\r\n")
 end
 
 function get_script_dir()
@@ -113,6 +114,14 @@ end
 local mise_cmd_dir = get_script_dir()
 local mise_exe_dir = path.getdirectory(mise_path)
 
+local function mise_settings_get(setting)
+    local cmd_line = mise_path .. " settings get " .. setting
+    local fh = io.popen(cmd_line)
+    assert(fh, "[ERROR]: failed to get setting " .. (setting or "(nil)"))
+    local line = fh:read("*l")
+    return line
+end
+
 local function get_temp_file(prefix, ext, path)
     if not prefix then
         prefix = CLINK_PID
@@ -132,12 +141,7 @@ local function get_temp_file(prefix, ext, path)
 end
 
 local function delete_files_and_dirs_with(paths_t, threshold_hour, recursive, wait)
-    local n = 0
-    for _, _ in ipairs(paths_t) do
-        n = 1
-        break
-    end
-    if n == 0 then return end
+    if #paths_t == 0 then return end
 
     local paths_arr      = '"' .. table.concat(paths_t, '", "') .. '"'
     threshold_hour       = -24 --threshold_hour or 0
@@ -541,6 +545,8 @@ end
 -- This section is executed when mise.lua is loaded as a Clink script.
 --------------------------------------------------------------------------------
 if not standalone then
+    local mise_setting_not_found_auto_install = mise_settings_get("not_found_auto_install")
+
     -- Ensure required scripts are in the PATH
     if not os.getenv(MISE_CMD_ACTIVATED_KEY) then
         local path = os.getenv("PATH")
@@ -595,6 +601,18 @@ if not standalone then
         return EVAL_ALIAS_NAME .. " " .. input
     end
 
+    -- Hook to handle command not found
+    local not_found_cmd
+    local is_command_not_found = false
+    local function _mise_clink_command_not_found()
+        is_command_not_found = false
+        local hook_not_found_cmd_line = string.format("%s hook-not-found -s pwsh -- %s", mise_path, not_found_cmd)
+        local ok = os.execute(hook_not_found_cmd_line)
+        if ok then
+            _mise_hook()
+        end
+    end
+
     -- Delete temp paths older than threshold_hour
     local function _delete_temps(threshold_hour)
         local tmps_t = {}
@@ -646,12 +664,32 @@ if not standalone then
         end)
     end
 
+    if not clink.oncommand then
+        print("mise.lua requires a newer version of Clink; please upgrade.")
+    else
+        clink.oncommand(function(line_state, cmd_t)
+            if mise_setting_not_found_auto_install ~= "true" then return end
+            if cmd_t.type == "unrecognized" then
+                if cmd_t.command ~= "mise" and not cmd_t.command:match("^mise-") then
+                    is_command_not_found = true
+                    not_found_cmd = cmd_t.command
+                end
+            end
+        end)
+    end
+
     if not clink.onfilterinput then
         print("mise.lua requires a newer version of Clink; please upgrade.")
     else
         clink.onfilterinput(function(input)
             if not os.getenv(MISE_ACTIVATED_KEY) then return end
             if not input or input:gsub("%s", "") == "" then return end
+
+            if is_command_not_found then
+                _mise_clink_command_not_found()
+                return
+            end
+
             local mod_cmd = _mise_auto_eval_cmds(input)
             return mod_cmd
         end)
