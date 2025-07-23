@@ -8,10 +8,19 @@ The easiest way to install it for use with your Clink is:
 
 1. Make sure you have [git](https://www.git-scm.com/downloads) installed.
 2. Clone this repo into a local directory via <code>git clone https://github.com/binyaminyblatt/mise-clink <em>local_directory</em></code>.
-3. Tell Clink to load scripts from the repo via <code>clink installscripts <em>local_directory</em></code>.
+3. Tell Clink to load scripts from the repo via <code>clink installscripts <em>absolute/path/to/local_directory</em></code>.
 4. Start a new session of Clink.
 
 Get updates using `git pull` and normal git workflow.
+
+## Usage Completions
+
+You can use mise shell completions that have been extended using [**cuc**](https://github.com/IMXEren/cuc). It should generate `mise.usage.lua` in the same directory as `mise.lua`.
+
+```cmd
+> mise completion clink
+...
+```
 
 ## Settings
 
