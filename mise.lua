@@ -19,6 +19,7 @@ if settings then
     end
 end
 
+-- Adding this explicitly is necessary to run the standalone script
 package.path = debug.getinfo(1, "S").source:match [[^@?(.*[\/])[^\/]-$]] .. "modules/?.lua;" .. package.path
 -- local inspect = require("inspect")
 local standalone = not clink.argmatcher
@@ -261,9 +262,12 @@ end
 -- Get the specified shell from the table of args
 -- @param from_shell_flag: bool refers to whether the shell is a flag arg like
 -- `--shell[=]pwsh`
+-- @param shell_choices: table of shell names as keys and values as bool, to
+-- choose from
 -- @return shell can be nil
 --------------------------------------------------------------------------------
-local function get_shell_from_args(args, from_shell_flag)
+local function get_shell_from_args(args, from_shell_flag, shell_choices)
+    shell_choices = shell_choices or mise_shells
     local shell
     for i, arg in ipairs(args) do
         if from_shell_flag then
@@ -275,7 +279,7 @@ local function get_shell_from_args(args, from_shell_flag)
                 shell = args[i + 1]
                 break
             end
-        elseif mise_shells[arg] then
+        elseif shell_choices[arg] then
             shell = arg
             break
         end
@@ -405,6 +409,50 @@ local function activate(args, env_fh, invoked_from_hook)
 end
 
 --------------------------------------------------------------------------------
+-- Generate mise usage completions
+-- To use it, you'd have to run `mise completion clink`
+-- The completions are stored in the same directory as mise.cmd
+--------------------------------------------------------------------------------
+local function completion()
+    -- Generate mise usage completions
+    local Cuc = require("cuc")
+    local mise_cmd_bin_dir = path.join(mise_cmd_dir, "bin")
+    local cuc_path = path.join(mise_cmd_bin_dir, Cuc.name_with_version("cuc"))
+    local cuc = Cuc.new(cuc_path)
+    if not cuc:check_cuc() then
+        local all_cucs = path.join(mise_cmd_bin_dir, "cuc-*.exe")
+        delete_files_and_dirs_with({all_cucs}, -1, false, false)
+        local ok, code = cuc:download_cuc()
+        if not ok then
+            eprint("[ERROR] failed to download cuc at " .. cuc.path)
+            return code
+        else
+            os.execute(string.format([[copy "%s" "%s" >nul]], cuc.path, path.join(mise_cmd_bin_dir, "cuc.exe")))
+        end
+    end
+    local mise_completions_lua = path.join(mise_cmd_dir, "mise.usage.lua")
+    if cuc:check_cuc() then
+        print("Generating completions ...")
+        local ok, code, completions = cuc:generate_completions(mise_path)
+        if ok then
+            local file = io.open(mise_completions_lua, "w+")
+            assert(file, "[ERROR] failed to open file: " .. mise_completions_lua)
+            file:write(completions)
+            file:close()
+            print(mise_completions_lua)
+            print("Reload Clink to apply the completions!")
+            return 0
+        else
+            eprint("[ERROR] failed to generate completions (path:" .. mise_completions_lua .. "); exit code: " .. code)
+            return code
+        end
+    else
+        eprint("[ERROR] cuc doesn't exist at " .. cuc.path)
+    end
+    return 1
+end
+
+--------------------------------------------------------------------------------
 -- Common subcommand handler for various subcommands
 --------------------------------------------------------------------------------
 local function common_subcommand(command, args, env_fh, invoked_from_hook)
@@ -483,7 +531,7 @@ end
 --------------------------------------------------------------------------------
 function parse_command_and_run_mise(args)
     local subcmds = {}
-    local process_cmds = { "activate", "deactivate", "e", "env", "hook-env", "sh", "shell" }
+    local process_cmds = { "activate", "deactivate", "e", "env", "hook-env", "sh", "shell", "completion" }
 
     -- Set process commands
     for _, cmd in ipairs(process_cmds) do
@@ -550,6 +598,18 @@ function mise(args)
         end
 
         local code = hook_env({ table.unpack(nargs, 3) }, env_fh)
+        os.exit(code)
+    end
+
+    if command == "completion" then
+        local nargs = { table.unpack(args, 2) }
+        local shell = get_shell_from_args(nargs, nil, { bash = 1, fish = 1, zsh = 1, clink = 1 })
+        if shell ~= "clink" then
+            local code = run_as_it_is(nargs)
+            os.exit(code)
+        end
+
+        local code = completion()
         os.exit(code)
     end
 
