@@ -634,7 +634,6 @@ end
 -- This section is executed when mise.lua is loaded as a Clink script.
 --------------------------------------------------------------------------------
 if not standalone then
-    local mise_setting_not_found_auto_install = mise_settings_get("not_found_auto_install")
 
     -- Ensure required scripts are in the PATH
     if not os.getenv(MISE_CMD_ACTIVATED_KEY) then
@@ -690,18 +689,6 @@ if not standalone then
         return EVAL_ALIAS_NAME .. " " .. input
     end
 
-    -- Hook to handle command not found
-    local not_found_cmd
-    local is_command_not_found = false
-    local function _mise_clink_command_not_found()
-        is_command_not_found = false
-        local hook_not_found_cmd_line = string.format("%s hook-not-found -s pwsh -- %s", mise_path, not_found_cmd)
-        local ok = os.execute(hook_not_found_cmd_line)
-        if ok then
-            _mise_hook()
-        end
-    end
-
     -- Delete temp paths older than threshold_hour
     local function _delete_temps(threshold_hour)
         local tmps_t = {}
@@ -753,32 +740,12 @@ if not standalone then
         end)
     end
 
-    if not clink.oncommand then
-        print("mise.lua requires a newer version of Clink; please upgrade.")
-    else
-        clink.oncommand(function(line_state, cmd_t)
-            if mise_setting_not_found_auto_install ~= "true" then return end
-            if cmd_t.type == "unrecognized" then
-                if cmd_t.command ~= "mise" and not cmd_t.command:match("^mise-") then
-                    is_command_not_found = true
-                    not_found_cmd = cmd_t.command
-                end
-            end
-        end)
-    end
-
     if not clink.onfilterinput then
         print("mise.lua requires a newer version of Clink; please upgrade.")
     else
         clink.onfilterinput(function(input)
             if not os.getenv(MISE_ACTIVATED_KEY) then return end
             if not input or input:gsub("%s", "") == "" then return end
-
-            if is_command_not_found then
-                _mise_clink_command_not_found()
-                return
-            end
-
             local mod_cmd = _mise_auto_eval_cmds(input)
             return mod_cmd
         end)
