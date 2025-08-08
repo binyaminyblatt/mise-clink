@@ -519,7 +519,7 @@ function run_as_it_is(args)
         cmd_line = args
     else
         eprint("[function run_as_it_is]: Unknown param type of args")
-        os.exit(1)
+        return 1
     end
     local _, _, code = os.execute(cmd_line)
     return code
