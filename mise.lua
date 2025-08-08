@@ -146,7 +146,7 @@ local function delete_files_and_dirs_with(paths_t, threshold_hour, recursive, wa
     if #paths_t == 0 then return end
 
     local paths_arr      = '"' .. table.concat(paths_t, '", "') .. '"'
-    threshold_hour       = -24 --threshold_hour or 0
+    threshold_hour       = threshold_hour or 0
     local recursive_flag = recursive and "$true" or "$false"
     local param_vars     = string.format([[
         <# Array of paths to clean #>
