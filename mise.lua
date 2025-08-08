@@ -748,7 +748,9 @@ if not standalone then
             if not os.getenv(MISE_ACTIVATED_KEY) then return end
             if not input or input:gsub("%s", "") == "" then return end
             local mod_cmd = _mise_auto_eval_cmds(input)
-            return mod_cmd
+            if mod_cmd then
+                return mod_cmd
+            end
         end)
     end
 end
