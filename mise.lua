@@ -264,14 +264,19 @@ end
 -- `--shell[=]pwsh`
 -- @param shell_choices: table of shell names as keys and values as bool, to
 -- choose from
--- @return shell can be nil
+-- @return shell: can be nil
+-- @return found_shell_flag: bool refers to whether the shell was found from
+-- the shell flag
 --------------------------------------------------------------------------------
 local function get_shell_from_args(args, from_shell_flag, shell_choices)
     shell_choices = shell_choices or mise_shells
-    local shell
+    local shell, found_shell_flag
     for i, arg in ipairs(args) do
         if from_shell_flag then
             local shell_arg = string.match(arg, "^-s") or string.match(arg, "^--shell")
+            if shell_arg then
+                found_shell_flag = true
+            end
             if shell_arg and string.match(arg, "=") then
                 shell = string.gsub(arg, "^[^=]+=", "")
                 break
@@ -284,7 +289,7 @@ local function get_shell_from_args(args, from_shell_flag, shell_choices)
             break
         end
     end
-    return shell
+    return shell, found_shell_flag
 end
 
 --------------------------------------------------------------------------------
@@ -457,8 +462,8 @@ end
 -- Common subcommand handler for various subcommands
 --------------------------------------------------------------------------------
 local function common_subcommand(command, args, env_fh, invoked_from_hook)
-    local shell = get_shell_from_args(args, true)
-    if shell ~= BASE_SHELL then
+    local shell, found_shell_flag = get_shell_from_args(args, true)
+    if shell ~= BASE_SHELL and found_shell_flag then
         local code = run_as_it_is(args)
         os.exit(code)
     end
