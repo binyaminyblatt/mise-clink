@@ -293,6 +293,8 @@ end
 --------------------------------------------------------------------------------
 local _hook_env_flags = {}
 local function hook_env(args, env_fh, invoked_from_hook)
+    if invoked_from_hook and not os.getenv(MISE_ACTIVATED_KEY) then return end
+
     local hook_args_line
     if type(args) == "table" then
         if not args then
@@ -305,7 +307,6 @@ local function hook_env(args, env_fh, invoked_from_hook)
         hook_args_line = args
     end
 
-    if invoked_from_hook and not os.getenv(MISE_ACTIVATED_KEY) then return end
     assert(hook_args_line, "[ERROR]: hook_args_line shouldn't be nil! type(hook_args): " .. type(args))
     local hook_cmd = string.format('"%s" hook-env %s', mise_path, hook_args_line)
     local fh, err = io.popen(hook_cmd)
