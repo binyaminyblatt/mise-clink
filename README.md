@@ -10,6 +10,7 @@ The easiest way to install it for use with your Clink is:
 2. Clone this repo into a local directory via <code>git clone https://github.com/binyaminyblatt/mise-clink <em>local_directory</em></code>.
 3. Tell Clink to load scripts from the repo via <code>clink installscripts <em>absolute/path/to/local_directory</em></code>.
 4. Start a new session of Clink.
+5. Ensure environment variable `CLINK_DIR` points to the clink directory containing `clink.bat`, `clink_*.exe`. The env var may be unset when using clink, installed by a package manager.
 
 Get updates using `git pull` and normal git workflow.
 
