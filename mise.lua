@@ -643,7 +643,7 @@ if not standalone then
         path = path:gsub(string.format("%s;", mise_cmd_dir:escape()), "")
         os.setenv("PATH", mise_cmd_dir .. ";" .. path)
         os.setenv(MISE_CMD_ACTIVATED_KEY, 1)
-        os.setenv(CLINK_PID_KEY, os.getpid())
+        os.setenv(CLINK_PID_KEY, CLINK_PID)
     end
 
     -- Check for automatic activation of mise
