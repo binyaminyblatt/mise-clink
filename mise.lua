@@ -422,7 +422,7 @@ local function completion()
     local cuc = Cuc.new(cuc_path)
     if not cuc:check_cuc() then
         local all_cucs = path.join(mise_cmd_bin_dir, "cuc-*.exe")
-        delete_files_and_dirs_with({all_cucs}, -1, false, false)
+        delete_files_and_dirs_with({ all_cucs }, -1, false, false)
         local ok, code = cuc:download_cuc()
         if not ok then
             eprint("[ERROR] failed to download cuc at " .. cuc.path)
@@ -635,7 +635,6 @@ end
 -- This section is executed when mise.lua is loaded as a Clink script.
 --------------------------------------------------------------------------------
 if not standalone then
-
     -- Ensure required scripts are in the PATH
     if not os.getenv(MISE_CMD_ACTIVATED_KEY) then
         local path = os.getenv("PATH")
