@@ -26,7 +26,7 @@ local standalone = not clink.argmatcher
 local BASE_SHELL = "pwsh"
 local CLINK_PID_KEY = "CLINK_PID"
 local CLINK_PID = os.getenv(CLINK_PID_KEY) or os.getpid()
-local EVAL_ALIAS_NAME = "eval.cmd"
+local EVAL_CMD_NAME = "eval.cmd"
 local MISE_CLINK_AUTO_ACTIVATE
 local MISE_CLINK_AUTO_ACTIVATE_ARGS
 
@@ -396,7 +396,7 @@ local function activate(args, env_fh, invoked_from_hook)
             set_env(MISE_ACTIVATED_KEY, 1)
             set_env(MISE_HOOK_ENV_ARGS_KEY, h_args_line)
         else
-            local hook_cmd = string.format('call "%s\\%s" "%s\\mise.cmd" hook-env %s', mise_cmd_dir, EVAL_ALIAS_NAME,
+            local hook_cmd = string.format('call "%s\\%s" "%s\\mise.cmd" hook-env %s', mise_cmd_dir, EVAL_CMD_NAME,
                 mise_cmd_dir,
                 h_args_line)
             write_line(hook_cmd)
@@ -687,7 +687,7 @@ if not standalone then
             if input:find("%f[%w_%-]" .. help_arg:escape() .. "%f[^%w_%-]") then return end
         end
 
-        return EVAL_ALIAS_NAME .. " " .. input
+        return EVAL_CMD_NAME .. " " .. input
     end
 
     -- Delete temp paths older than threshold_hour
