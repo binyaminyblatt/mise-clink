@@ -107,12 +107,50 @@ local function findMiseExe()
     return path and replaceShimMiseExe(path) or "mise.exe"
 end
 
-local mise_path = findMiseExe()
+function load_mise_clink_config(path)
+    local json = require("json")
+    local fh, err = io.open(path, "r")
+    if not fh and err then
+        os.copy(path, path .. ".backup")
+        return save_default_mise_clink_config(path)
+    end
+    assert(fh, "[ERROR]: failed to open: " .. path .. (err and " :" .. err or ""))
+    local data = fh:read("*a")
+    fh:close()
+    local config = json.decode(data)
+    return config
+end
+
+function save_mise_clink_config(path, config)
+    local json = require("json")
+    local data = json.encode(config)
+    local fh, err = io.open(path, "w")
+    assert(fh, "[ERROR]: failed to open: " .. path .. (err and " :" .. err or ""))
+    fh:write(data)
+    fh:flush()
+    fh:close()
+end
+
+function default_mise_clink_config()
+    local config = {
+        mise_path = findMiseExe(),
+    }
+    return config
+end
+
+function save_default_mise_clink_config(path)
+    local config = default_mise_clink_config()
+    save_mise_clink_config(path, config)
+    return config
+end
+
+local mise_cmd_dir = get_script_dir()
+local mise_clink_config = load_mise_clink_config(path.join(mise_cmd_dir, "mise.clink.json"))
+local mise_path = mise_clink_config.mise_path
 if not mise_path or mise_path == "" then
     eprint("Error: mise.exe not found in PATH.")
     mise_path = "mise.exe"
 end
-local mise_cmd_dir = get_script_dir()
 local mise_exe_dir = path.getdirectory(mise_path)
 local mise_shells = { bash = 1, elvish = 1, fish = 1, nu = 1, xonsh = 1, zsh = 1, pwsh = 1 }
 
@@ -652,14 +690,17 @@ if not standalone then
 
     -- Check for automatic activation of mise
     if not os.getenv(MISE_ACTIVATED_KEY) then
-        if MISE_CLINK_AUTO_ACTIVATE then
-            local args = { mise_path, "activate", BASE_SHELL }
-            if MISE_CLINK_AUTO_ACTIVATE_ARGS and MISE_CLINK_AUTO_ACTIVATE_ARGS ~= "" then
-                local line_args = string.split(MISE_CLINK_AUTO_ACTIVATE_ARGS, "%s")
-                table.extend(args, line_args)
+        local co = coroutine.create(function()
+            if MISE_CLINK_AUTO_ACTIVATE then
+                local args = { mise_path, "activate", BASE_SHELL }
+                if MISE_CLINK_AUTO_ACTIVATE_ARGS and MISE_CLINK_AUTO_ACTIVATE_ARGS ~= "" then
+                    local line_args = string.split(MISE_CLINK_AUTO_ACTIVATE_ARGS, "%s")
+                    table.extend(args, line_args)
+                end
+                activate(args, nil, true)
             end
-            activate(args, nil, true)
-        end
+        end)
+        clink.runcoroutineuntilcomplete(co)
     end
 
     -- Hook environment variables if mise is activated
