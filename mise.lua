@@ -27,6 +27,8 @@ local BASE_SHELL = "pwsh"
 local CLINK_PID_KEY = "CLINK_PID"
 local CLINK_PID = os.getenv(CLINK_PID_KEY) or os.getpid()
 local EVAL_CMD_NAME = "eval.cmd"
+local MISE_BIN_KEY = "__MISE_BIN"
+local MISE_BIN = os.getenv(MISE_BIN_KEY)
 local MISE_CLINK_AUTO_ACTIVATE
 local MISE_CLINK_AUTO_ACTIVATE_ARGS
 
@@ -97,12 +99,24 @@ local function replaceShimMiseExe(shim_mise_exe)
 end
 
 --------------------------------------------------------------------------------
+-- Find the path to mise.exe using the "__MISE_BIN" env variable.
+--------------------------------------------------------------------------------
+local function findMiseExeFromMiseBin()
+    local mise_bin = MISE_BIN and replaceShimMiseExe(MISE_BIN)
+    return (mise_bin and mise_bin ~= "") and mise_bin
+end
+
+--------------------------------------------------------------------------------
 -- Find the path to mise.exe using the "where" command.
 --------------------------------------------------------------------------------
 local function findMiseExe()
+    local path = findMiseExeFromMiseBin()
+    if path then
+        return path
+    end
     local fh, err = io.popen("where mise.exe 2>nul")
     assert(fh, "[ERROR]: 'where' command failed to execute: " .. (err or ""))
-    local path = fh:read("*l")
+    path = fh:read("*l")
     fh:close()
     return path and replaceShimMiseExe(path) or "mise.exe"
 end
@@ -145,10 +159,11 @@ function save_default_mise_clink_config(path)
 end
 
 local mise_cmd_dir = get_script_dir()
-local mise_clink_config = load_mise_clink_config(path.join(mise_cmd_dir, "mise.clink.json"))
-local mise_path = mise_clink_config.mise_path
+local mise_clink_config_path = path.join(mise_cmd_dir, "mise.clink.json")
+local mise_clink_config = load_mise_clink_config(mise_clink_config_path) -- TODO: Load config lazily i.e. load when getting any setting
+local mise_path = findMiseExeFromMiseBin() or mise_clink_config.mise_path
 if not mise_path or mise_path == "" then
-    eprint("Error: mise.exe not found in PATH.")
+    eprint("[ERROR]: mise.exe not found in PATH.")
     mise_path = "mise.exe"
 end
 local mise_exe_dir = path.getdirectory(mise_path)
@@ -575,7 +590,7 @@ end
 --------------------------------------------------------------------------------
 function parse_command_and_run_mise(args)
     local subcmds = {}
-    local process_cmds = { "activate", "deactivate", "e", "env", "hook-env", "sh", "shell", "completion" }
+    local process_cmds = { "activate", "deactivate", "e", "env", "hook-env", "sh", "shell", "completion", "clink" }
 
     -- Set process commands
     for _, cmd in ipairs(process_cmds) do
@@ -655,6 +670,14 @@ function mise(args)
 
         local code = completion()
         os.exit(code)
+    end
+
+    if command == "clink" then
+        if args[4] == "reset-config" then
+            print("Resetting mise-clink config to default: [" .. mise_clink_config_path .. "]")
+            save_default_mise_clink_config(mise_clink_config_path)
+        end
+        os.exit(0)
     end
 
     if is_common_subcommand(command) then
