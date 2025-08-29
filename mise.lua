@@ -367,8 +367,8 @@ local function hook_env(args, env_fh, invoked_from_hook)
 
     assert(hook_args_line, "[ERROR]: hook_args_line shouldn't be nil! type(hook_args): " .. type(args))
     local hook_cmd = string.format('"%s" hook-env %s', mise_path, hook_args_line)
-    local fh, err = io.popen(hook_cmd)
-    assert(fh, "[ERROR]: failed to run: " .. hook_cmd .. (err and " :" .. err or ""))
+    local fh = io.popen(hook_cmd)
+    assert(fh, "[ERROR]: failed to run: " .. hook_cmd)
     local output = fh:read("*a")
     local success, _, code = fh:close()
     if success then
@@ -721,6 +721,7 @@ if not standalone then
                     table.extend(args, line_args)
                 end
                 activate(args, nil, true)
+                hook_env(os.getenv(MISE_HOOK_ENV_ARGS_KEY), nil, true)
             end
         end)
         clink.runcoroutineuntilcomplete(co)
@@ -729,7 +730,10 @@ if not standalone then
     -- Hook environment variables if mise is activated
     local function _mise_hook()
         if not os.getenv(MISE_ACTIVATED_KEY) then return end
-        hook_env(os.getenv(MISE_HOOK_ENV_ARGS_KEY), nil, true)
+        local co = coroutine.create(function ()
+            hook_env(os.getenv(MISE_HOOK_ENV_ARGS_KEY), nil, true)
+        end)
+        clink.runcoroutineuntilcomplete(co)
     end
 
     -- Auto-evaluate commands for mise
