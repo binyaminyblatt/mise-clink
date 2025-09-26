@@ -34,8 +34,9 @@ function Cuc:download_cuc()
     return ok, code
 end
 
-function Cuc:generate_completions(mise_path)
-    local cmd_line = string.format([[""%s" usage | "%s" generate --complete"]], mise_path, self.path)
+function Cuc:generate_completions(mise_path, args)
+    args = args or {}
+    local cmd_line = string.format([[""%s" usage | "%s" generate --complete %s"]], mise_path, self.path, '"' .. table.concat(args, '" "') .. '"')
     local p = io.popen(cmd_line)
     assert(p, "[ERROR] failed to generate completions: " .. (cmd_line or "(nil)"))
     local output = p:read("*a")
