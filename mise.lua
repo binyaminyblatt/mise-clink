@@ -469,10 +469,10 @@ end
 
 --------------------------------------------------------------------------------
 -- Generate mise usage completions
--- To use it, you'd have to run `mise completion clink`
+-- To use it, you'd have to run `mise completion clink -- [OPTIONS] [SUBCOMMANDS] [ARGS]`
 -- The completions are stored in the same directory as mise.cmd
 --------------------------------------------------------------------------------
-local function completion()
+local function completion(args)
     -- Generate mise usage completions
     local Cuc = require("cuc")
     local mise_cmd_bin_dir = path.join(mise_cmd_dir, "bin")
@@ -492,7 +492,7 @@ local function completion()
     local mise_completions_lua = path.join(mise_cmd_dir, "mise.usage.lua")
     if cuc:check_cuc() then
         print("Generating completions ...")
-        local ok, code, completions = cuc:generate_completions(mise_path)
+        local ok, code, completions = cuc:generate_completions(mise_path, args)
         if ok then
             local file = io.open(mise_completions_lua, "w+")
             assert(file, "[ERROR] failed to open file: " .. mise_completions_lua)
@@ -668,7 +668,19 @@ function mise(args)
             os.exit(code)
         end
 
-        local code = completion()
+        local collect_index = #nargs + 1
+        for i, arg in ipairs(nargs) do
+            if arg == "--" then
+                collect_index = i + 1
+                break
+            end
+        end
+        local gargs = {}
+        if #nargs >= collect_index then
+            table.extend(gargs, { table.unpack(nargs, collect_index) })
+        end
+
+        local code = completion(gargs)
         os.exit(code)
     end
 
@@ -730,7 +742,7 @@ if not standalone then
     -- Hook environment variables if mise is activated
     local function _mise_hook()
         if not os.getenv(MISE_ACTIVATED_KEY) then return end
-        local co = coroutine.create(function ()
+        local co = coroutine.create(function()
             hook_env(os.getenv(MISE_HOOK_ENV_ARGS_KEY), nil, true)
         end)
         clink.runcoroutineuntilcomplete(co)
