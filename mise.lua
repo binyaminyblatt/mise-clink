@@ -371,10 +371,14 @@ local function hook_env(args, env_fh, invoked_from_hook)
     assert(fh, "[ERROR]: failed to run: " .. hook_cmd)
     local output = fh:read("*a")
     local success, _, code = fh:close()
+    local refresh = false
     if success then
         for line in output:gmatch("[^\r\n]+") do
             local key, val = parse_env(line)
             if invoked_from_hook then
+                if not refresh and key then
+                    refresh = true
+                end
                 set_env(key, val)
             else
                 write_env(key, val, env_fh)
@@ -383,7 +387,7 @@ local function hook_env(args, env_fh, invoked_from_hook)
     elseif not invoked_from_hook then
         eprint(output)
     end
-    return code
+    return code, refresh
 end
 
 --------------------------------------------------------------------------------
@@ -733,7 +737,10 @@ if not standalone then
                     table.extend(args, line_args)
                 end
                 activate(args, nil, true)
-                hook_env(os.getenv(MISE_HOOK_ENV_ARGS_KEY), nil, true)
+                local _, refresh = hook_env(os.getenv(MISE_HOOK_ENV_ARGS_KEY), nil, true)
+                if refresh then
+                    clink.refilterprompt()
+                end
             end
         end)
         clink.runcoroutineuntilcomplete(co)
@@ -743,7 +750,10 @@ if not standalone then
     local function _mise_hook()
         if not os.getenv(MISE_ACTIVATED_KEY) then return end
         local co = coroutine.create(function()
-            hook_env(os.getenv(MISE_HOOK_ENV_ARGS_KEY), nil, true)
+            local _, refresh = hook_env(os.getenv(MISE_HOOK_ENV_ARGS_KEY), nil, true)
+            if refresh then
+                clink.refilterprompt()
+            end
         end)
         clink.runcoroutineuntilcomplete(co)
     end
