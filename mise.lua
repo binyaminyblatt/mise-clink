@@ -742,7 +742,10 @@ if not standalone then
     -- Hook environment variables if mise is activated
     local function _mise_hook()
         if not os.getenv(MISE_ACTIVATED_KEY) then return end
-        hook_env(os.getenv(MISE_HOOK_ENV_ARGS_KEY), nil, true)
+        local co = coroutine.create(function()
+            hook_env(os.getenv(MISE_HOOK_ENV_ARGS_KEY), nil, true)
+        end)
+        clink.runcoroutineuntilcomplete(co)
     end
 
     -- Auto-evaluate commands for mise
