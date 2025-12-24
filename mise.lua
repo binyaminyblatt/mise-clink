@@ -729,6 +729,8 @@ if not standalone then
 
     -- Check for automatic activation of mise
     if not os.getenv(MISE_ACTIVATED_KEY) then
+        -- Running a coroutine to activate mise
+        -- so to not block the shell startup
         local co = coroutine.create(function()
             if MISE_CLINK_AUTO_ACTIVATE then
                 local args = { mise_path, "activate", BASE_SHELL }
@@ -749,13 +751,12 @@ if not standalone then
     -- Hook environment variables if mise is activated
     local function _mise_hook()
         if not os.getenv(MISE_ACTIVATED_KEY) then return end
-        local co = coroutine.create(function()
-            local _, refresh = hook_env(os.getenv(MISE_HOOK_ENV_ARGS_KEY), nil, true)
-            if refresh then
-                clink.refilterprompt()
-            end
-        end)
-        clink.runcoroutineuntilcomplete(co)
+        local info = {}
+        -- Note: shouldn't be run in a coroutine because the prompt must wait
+        -- for the environment to be updated before rendering and taking input
+        info.code, info.refresh = hook_env(os.getenv(MISE_HOOK_ENV_ARGS_KEY), nil, true)
+        -- Handle refresh of the prompt if needed
+        return info
     end
 
     -- Auto-evaluate commands for mise
@@ -823,7 +824,7 @@ if not standalone then
                 local last_deleted = tonumber(os.getenv(MISE_CMD_TEMP_DIRS_LAST_DELETED_KEY) or 0)
                 local threshold_hour = 1
                 local threshold_secs = threshold_hour * 60 * 60
-                if now - last_deleted + threshold_secs > 0 then
+                if now - last_deleted > threshold_secs then
                     local co = coroutine.create(function()
                         _delete_temps(threshold_hour)
                     end)
