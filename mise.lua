@@ -94,23 +94,23 @@ end
 --------------------------------------------------------------------------------
 -- Replace the path to mise.exe if its a shim
 --------------------------------------------------------------------------------
-local function replaceShimMiseExe(shim_mise_exe)
+local function replace_shim_mise_exe(shim_mise_exe)
     return shim_mise_exe:gsub("scoop\\shims\\", "scoop\\apps\\mise\\current\\bin\\")
 end
 
 --------------------------------------------------------------------------------
 -- Find the path to mise.exe using the "__MISE_BIN" env variable.
 --------------------------------------------------------------------------------
-local function findMiseExeFromMiseBin()
-    local mise_bin = MISE_BIN and replaceShimMiseExe(MISE_BIN)
+local function find_mise_exe_from_mise_bin()
+    local mise_bin = MISE_BIN and replace_shim_mise_exe(MISE_BIN)
     return (mise_bin and mise_bin ~= "") and mise_bin
 end
 
 --------------------------------------------------------------------------------
 -- Find the path to mise.exe using the "where" command.
 --------------------------------------------------------------------------------
-local function findMiseExe()
-    local path = findMiseExeFromMiseBin()
+local function find_mise_exe()
+    local path = find_mise_exe_from_mise_bin()
     if path then
         return path
     end
@@ -118,7 +118,7 @@ local function findMiseExe()
     assert(fh, "[ERROR]: 'where' command failed to execute: " .. (err or ""))
     path = fh:read("*l")
     fh:close()
-    return path and replaceShimMiseExe(path) or "mise.exe"
+    return path and replace_shim_mise_exe(path) or "mise.exe"
 end
 
 function load_mise_clink_config(path)
@@ -147,7 +147,7 @@ end
 
 function default_mise_clink_config()
     local config = {
-        mise_path = findMiseExe(),
+        mise_path = find_mise_exe(),
     }
     return config
 end
@@ -161,7 +161,7 @@ end
 local mise_cmd_dir = get_script_dir()
 local mise_clink_config_path = path.join(mise_cmd_dir, "mise.clink.json")
 local mise_clink_config = load_mise_clink_config(mise_clink_config_path) -- TODO: Load config lazily i.e. load when getting any setting
-local mise_path = findMiseExeFromMiseBin() or mise_clink_config.mise_path
+local mise_path = find_mise_exe_from_mise_bin() or mise_clink_config.mise_path
 if not mise_path or mise_path == "" then
     eprint("[ERROR]: mise.exe not found in PATH.")
     mise_path = "mise.exe"
