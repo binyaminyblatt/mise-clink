@@ -461,7 +461,7 @@ local function activate(args, env_fh, invoked_from_hook)
             local hook_cmd = string.format('call "%s\\%s" "%s\\mise.cmd" hook-env %s', mise_cmd_dir, EVAL_CMD_NAME,
                 mise_cmd_dir,
                 h_args_line)
-            write_line(hook_cmd)
+            write_line(hook_cmd, env_fh)
             write_env(MISE_ACTIVATED_KEY, 1, env_fh)
             write_env(MISE_HOOK_ENV_ARGS_KEY, h_args_line, env_fh)
         end
