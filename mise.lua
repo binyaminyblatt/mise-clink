@@ -31,6 +31,7 @@ local MISE_BIN_KEY = "__MISE_BIN"
 local MISE_BIN = os.getenv(MISE_BIN_KEY)
 local MISE_CLINK_AUTO_ACTIVATE
 local MISE_CLINK_AUTO_ACTIVATE_ARGS
+local MISE_CLINK_ASYNC_HOOK
 
 local MISE_CMD_ACTIVATED_KEY = "__MISE_CLINK_CMD_ACTIVATED"
 local MISE_ACTIVATED_KEY = "__MISE_CLINK_ACTIVATED"
@@ -45,8 +46,13 @@ if not standalone then
         settings.add("mise.auto_activate", true, "Auto activate mise on clink startup",
             "Otherwise, you'd need to run 'eval mise activate pwsh' manually.")
         settings.add("mise.auto_activate_args", "", "Line of args: mise activate " .. BASE_SHELL .. " <ARGS_LINE>")
+        settings.add("mise.async_hook", false, "Asynchronously call hook-env from prompt hook",
+            "Env changes may not be reflected immediately but allows instant prompt. Uses clink.promptcoroutine internally.")
+        settings.add("mise.prompt_hook_priority", 0, "Priority of the mise prompt hook",
+            "Lower number means higher priority (preferred). This setting is only used if async_hook is enabled.")
         MISE_CLINK_AUTO_ACTIVATE = settings.get("mise.auto_activate")
         MISE_CLINK_AUTO_ACTIVATE_ARGS = settings.get("mise.auto_activate_args")
+        MISE_CLINK_ASYNC_HOOK = settings.get("mise.async_hook")
     end
 end
 
@@ -802,11 +808,15 @@ if not standalone then
     ------------------------------------------------------------------------------------
     -- Hooks
     ------------------------------------------------------------------------------------
-    if not clink.onbeginedit then
+    if not clink.onbeginedit or not clink.promptfilter then
         print("mise.lua requires a newer version of Clink; please upgrade.")
     else
         clink.onbeginedit(function()
             if not os.getenv(MISE_ACTIVATED_KEY) then return end
+            local use_async_hook = settings.get("mise.async_hook")
+
+            if use_async_hook ~= MISE_CLINK_ASYNC_HOOK then
+                MISE_CLINK_ASYNC_HOOK = use_async_hook
                 clink.reload()
                 return
             end
@@ -824,8 +834,17 @@ if not standalone then
                 end
             end
 
-            _mise_hook()
+            if not MISE_CLINK_ASYNC_HOOK then
+                _mise_hook()
+            end
         end)
+
+        if MISE_CLINK_ASYNC_HOOK then
+            local mise_filter = clink.promptfilter(settings.get("mise.prompt_hook_priority"))
+            function mise_filter:filter()
+                local info = clink.promptcoroutine(_mise_hook)
+            end
+        end
     end
 
     if not clink.onfilterinput then
