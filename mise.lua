@@ -807,14 +807,6 @@ if not standalone then
     else
         clink.onbeginedit(function()
             if not os.getenv(MISE_ACTIVATED_KEY) then return end
-            local auto_activate = settings.get("mise.auto_activate")
-            local auto_activate_args = settings.get("mise.auto_activate_args")
-
-            if auto_activate ~= MISE_CLINK_AUTO_ACTIVATE or auto_activate_args ~= MISE_CLINK_AUTO_ACTIVATE_ARGS then
-                local command = "deactivate"
-                common_subcommand(command, { mise_path, command }, nil, true)
-                MISE_CLINK_AUTO_ACTIVATE = auto_activate
-                MISE_CLINK_AUTO_ACTIVATE_ARGS = auto_activate_args
                 clink.reload()
                 return
             end
