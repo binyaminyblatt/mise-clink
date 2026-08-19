@@ -36,7 +36,7 @@ end
 
 function Cuc:generate_completions(mise_path, args)
     args = args or {}
-    arg_line = ""
+    local arg_line = ""
     if #args ~= 0 then
         arg_line = '"' .. table.concat(args, '" "') .. '"'
     end
