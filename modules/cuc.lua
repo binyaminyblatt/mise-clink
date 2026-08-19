@@ -1,7 +1,7 @@
 local Cuc = {}
 Cuc.__index = Cuc
 
-local COMPATIBLE_VERSION = "0.2.5"
+local COMPATIBLE_VERSION = "0.2.7"
 
 function Cuc.new(path)
     local self = setmetatable({}, Cuc)
@@ -11,7 +11,7 @@ function Cuc.new(path)
 end
 
 function Cuc.name_with_version(prefix)
-    return string.format("%s-v%s.exe", prefix, COMPATIBLE_VERSION)
+    return string.format("%s-%s.exe", prefix, COMPATIBLE_VERSION)
 end
 
 function Cuc:check_cuc()
@@ -27,7 +27,7 @@ function Cuc:download_cuc()
     end
 
     local download_ps1 = string.format(
-        [[irm 'https://github.com/IMXEren/cuc/releases/download/v%s/cuc-v%s-x64.exe' -OutFile '%s']], self.version,
+        [[irm 'https://github.com/IMXEren/cuc/releases/download/v%s/cuc-%s-x64.exe' -OutFile '%s']], self.version,
         self.version,
         self.path)
     ok, _, code = os.execute([[powershell -NoLogo -NonInteractive -NoProfile -Command ]] .. download_ps1)
