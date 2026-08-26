@@ -22,6 +22,7 @@ end
 -- Adding this explicitly is necessary to run the standalone script
 package.path = debug.getinfo(1, "S").source:match [[^@?(.*[\/])[^\/]-$]] .. "modules/?.lua;" .. package.path
 -- local inspect = require("inspect")
+local utils = require("utils")
 local standalone = not clink.argmatcher
 local BASE_SHELL = "pwsh"
 local CLINK_PID_KEY = "CLINK_PID"
@@ -256,25 +257,19 @@ end
 
 --------------------------------------------------------------------------------
 -- Parse environment variables from the line of PowerShell scripting language.
--- Extracts key-value pairs from line that start with "$env" or "Remove-Item".
+-- Extracts key-value pairs from line that start with "${env}", "$env" or "Remove-Item".
 --------------------------------------------------------------------------------
 local function parse_env(line)
-    if line:match("^%$[eE][nN][vV]") then
-        local key, val = line:match("^%$[eE][nN][vV]:([%w_]+)%s*=%s*(.*)$")
+    if line:match("^%${?[eE][nN][vV]:") then
+        local key, val = utils.parse_pwsh_env_assignment(line)
         if key and val then
-            -- Remove outer single quotes
-            val = val:gsub("^\'", ""):gsub("\'$", "")
-            val = val:gsub("\'?%+%[IO%.Path%]::PathSeparator%+", ";")
-            val = val:gsub("%$[eE][nN][vV]:([%w_]+)", "%%%1%%")
-            -- Handle escaped quotes or trailing backslashes
-            val = val:gsub("\\'", "'"):gsub("\\\\", "\\")
             if key:upper() == "PATH" then
                 val = prepend_mise_cmd_before_mise_exe(val)
             end
             return key, val
         end
     elseif line:match("^Remove%-Item") then
-        local key = line:match("^Remove%-Item .- %-Path [eE][nN][vV]:[/\\](%S+)")
+        local key = utils.parse_pwsh_remove_env_key(line)
         if key then
             if key == "__MISE_WATCH" then key = "__MISE_SESSION" end
             return key, nil
