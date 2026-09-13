@@ -1,7 +1,7 @@
 local Cuc = {}
 Cuc.__index = Cuc
 
-local COMPATIBLE_VERSION = "0.2.7"
+local COMPATIBLE_VERSION = "0.3.0"
 
 function Cuc.new(path)
     local self = setmetatable({}, Cuc)
